@@ -1,0 +1,16 @@
+scan_to_scan_filter_chain:
+  ros__parameters:
+    target_frame: "chassis_link"
+    filter_chain:
+      - name: "median_filter"
+        type: "laser_filters/LaserScanMedianFilter"
+        params:
+          range_filter_window_size: 5  # Odd number; larger for more smoothing
+          intensity_filter_window_size: 5  # If using intensities
+      - name: "speckle_filter"
+        type: "laser_filters/LaserScanSpeckleFilter"
+        params:
+          max_range: 10.0  # Max sensor range (adjust to your lidar)
+          max_range_difference: 0.2  # Distance threshold to consider connected (meters)
+          max_speckle_size: 3  # Max points in an isolated speckle
+          filter_type: 0  # 0: Distance-based (recommended for noise)

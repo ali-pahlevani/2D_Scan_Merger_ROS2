@@ -1,0 +1,51 @@
+# scan_2d_merger_node:
+#   ros__parameters:
+    # List of input laser scan topics. Supports 1 to N topics (no hard limit).
+    scan_topics: ["/scan/safety_1", "/scan/safety_2", "/scan/safety_3"]
+
+    # QoS reliability policy per topic: 0 = reliable, 1 = best effort.
+    # Missing entries default to reliable.
+    scan_policies: [0, 0, 0]
+
+    # Output frame for the merged scan (typically base_link or chassis_link).
+    merged_frame_id: "chassis_link"
+
+    # Output topic name.
+    output_topic: "merged_scan"
+
+    # Maximum time difference [s] between scans to consider them synchronized.
+    # Ignored when merging a single lidar.
+    sync_slop: 0.1
+
+    # TF lookup timeout [s].
+    tolerance: 0.05
+
+    # Height filter in the merged frame [m]. Points outside this range are discarded.
+    min_height: 0.01
+    max_height: 1.0
+
+    # Angular range of the output scan [rad].
+    angle_min: -3.14159
+    angle_max:  3.14159
+    angle_increment: 0.00872665
+
+    # Scan timing [s].
+    scan_time: 0.0588
+
+    # Range filter [m]. Points outside this range are discarded.
+    range_min: 0.1
+    range_max: 20.0
+
+    # If true, empty bins report +inf; otherwise range_max + inf_epsilon.
+    use_inf: true
+    inf_epsilon: 1.0
+
+    # Per-topic buffer depth for the synchronizer.
+    queue_size: 20
+
+    # Enable verbose startup logging.
+    debug: true
+
+    # Set to true only if scanner frames move relative to merged_frame_id at runtime.
+    # When false, transforms are looked up once and cached (faster).
+    moving_frames: false
