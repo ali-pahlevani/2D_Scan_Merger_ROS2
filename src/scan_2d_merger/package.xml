@@ -4,8 +4,12 @@
   <name>scan_2d_merger</name>
   <version>2.0.0</version>
   <description>A laser scan merger for 1 to N 2D LiDARs, with approximate-time synchronization.</description>
-  <maintainer email="a.pahlevani2050@gmail.com">Ali Pahlevani</maintainer>
+  <maintainer email="a.pahlevani1998@gmail.com">Ali Pahlevani</maintainer>
   <license>MIT</license>
+
+  <url type="website">https://github.com/ali-pahlevani/2D_Scan_Merger_ROS2</url>
+  <url type="repository">https://github.com/ali-pahlevani/2D_Scan_Merger_ROS2</url>
+  <url type="bugtracker">https://github.com/ali-pahlevani/2D_Scan_Merger_ROS2/issues</url>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
