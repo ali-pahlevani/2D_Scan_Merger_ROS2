@@ -78,6 +78,7 @@ void LaserScanMerger::loadParams()
   range_max_       = declare_parameter<double>("range_max",            static_cast<double>(std::numeric_limits<float>::max()));
   inf_eps_         = declare_parameter<double>("inf_epsilon",          1.0);
   use_inf_         = declare_parameter<bool>("use_inf",                true);
+  keep_intensity_  = declare_parameter<bool>("keep_intensity",        false);
   scan_time_       = declare_parameter<double>("scan_time",            1.0 / 30.0);
   min_height_      = declare_parameter<double>("min_height",           std::numeric_limits<double>::lowest());
   max_height_      = declare_parameter<double>("max_height",           std::numeric_limits<double>::max());
@@ -165,6 +166,12 @@ void LaserScanMerger::start()
     worker_scan_ptrs_.resize(n, nullptr);
     worker_ranges_.resize(n);
     for (auto& r : worker_ranges_) r.resize(ranges_size_);
+
+    // Only allocate the per-worker intensity scratch arrays when intensities are wanted.
+    if (keep_intensity_) {
+      worker_intensities_.resize(n);
+      for (auto& in : worker_intensities_) in.resize(ranges_size_);
+    }
 
     start_barrier_ = std::make_unique<std::barrier<>>(static_cast<std::ptrdiff_t>(n + 1));
     done_barrier_  = std::make_unique<std::barrier<>>(static_cast<std::ptrdiff_t>(n + 1));
@@ -278,8 +285,14 @@ bool LaserScanMerger::lookupTransforms(const std::vector<LaserScanPtr>& scans)
 void LaserScanMerger::projectScan(
   const LaserScanMsg& scan,
   const tf2::Transform& tf,
-  std::vector<float>& out_ranges) const
+  std::vector<float>& out_ranges,
+  std::vector<float>* out_intensities) const
 {
+  // Intensities are only carried when requested and the input actually provides a
+  // per-ray intensity array of matching length; otherwise winning bins stay at 0.
+  const bool carry_intensity =
+    out_intensities != nullptr && scan.intensities.size() == scan.ranges.size();
+
   for (std::size_t ray = 0; ray < scan.ranges.size(); ++ray) {
     const float r = scan.ranges[ray];
     if (!std::isfinite(r) || r < scan.range_min || r > scan.range_max) continue;
@@ -301,7 +314,11 @@ void LaserScanMerger::projectScan(
     if (static_cast<uint32_t>(bin) >= ranges_size_) continue;
 
     const auto r2d = static_cast<float>(range_2d);
-    if (r2d < out_ranges[bin]) out_ranges[bin] = r2d;
+    if (r2d < out_ranges[bin]) {
+      out_ranges[bin] = r2d;
+      // Couple the intensity to the range: the ray that wins the bin also owns its intensity.
+      if (carry_intensity) (*out_intensities)[bin] = scan.intensities[ray];
+    }
   }
 }
 
@@ -310,7 +327,8 @@ void LaserScanMerger::workerLoop(std::size_t idx)
   while (true) {
     start_barrier_->arrive_and_wait();
     if (workers_shutdown_.load(std::memory_order_relaxed)) break;
-    projectScan(*worker_scan_ptrs_[idx], transforms_[idx], worker_ranges_[idx]);
+    projectScan(*worker_scan_ptrs_[idx], transforms_[idx], worker_ranges_[idx],
+                keep_intensity_ ? &worker_intensities_[idx] : nullptr);
     done_barrier_->arrive_and_wait();
   }
 }
@@ -344,26 +362,47 @@ void LaserScanMerger::mergeAndPublish(const std::vector<LaserScanPtr>& scans)
   if (scan_workers_.empty()) {
     // N = 1: project the single scan directly into the output array.
     out->ranges.assign(ranges_size_, fill_value);
-    projectScan(*scans[0], transforms_[0], out->ranges);
+    if (keep_intensity_) {
+      out->intensities.assign(ranges_size_, 0.0f);
+      projectScan(*scans[0], transforms_[0], out->ranges, &out->intensities);
+    } else {
+      projectScan(*scans[0], transforms_[0], out->ranges, nullptr);
+    }
   } else {
     // N > 1: dispatch to worker threads, then fold their results.
     for (std::size_t i = 0; i < n; ++i) {
       worker_scan_ptrs_[i] = scans[i].get();
       std::fill(worker_ranges_[i].begin(), worker_ranges_[i].end(), fill_value);
+      if (keep_intensity_)
+        std::fill(worker_intensities_[i].begin(), worker_intensities_[i].end(), 0.0f);
     }
 
     start_barrier_->arrive_and_wait();
     done_barrier_->arrive_and_wait();
 
-    // Combine per-worker arrays by taking the minimum range at each angular bin.
     out->ranges = worker_ranges_[0];
-    for (std::size_t i = 1; i < n; ++i) {
-      std::transform(
-        out->ranges.begin(), out->ranges.end(),
-        worker_ranges_[i].begin(),
-        out->ranges.begin(),
-        [](float a, float b) { return std::min(a, b); }
-      );
+    if (keep_intensity_) {
+      // Fold coupling range and intensity: whichever worker holds the minimum range
+      // at a bin also supplies that bin's intensity, mirroring projectScan's rule.
+      out->intensities = worker_intensities_[0];
+      for (std::size_t i = 1; i < n; ++i) {
+        for (uint32_t bin = 0; bin < ranges_size_; ++bin) {
+          if (worker_ranges_[i][bin] < out->ranges[bin]) {
+            out->ranges[bin]      = worker_ranges_[i][bin];
+            out->intensities[bin] = worker_intensities_[i][bin];
+          }
+        }
+      }
+    } else {
+      // Combine per-worker arrays by taking the minimum range at each angular bin.
+      for (std::size_t i = 1; i < n; ++i) {
+        std::transform(
+          out->ranges.begin(), out->ranges.end(),
+          worker_ranges_[i].begin(),
+          out->ranges.begin(),
+          [](float a, float b) { return std::min(a, b); }
+        );
+      }
     }
   }
 

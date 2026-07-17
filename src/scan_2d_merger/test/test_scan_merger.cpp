@@ -107,10 +107,12 @@ protected:
     double range_min  = 0.1,
     double range_max  = 100.0,
     double min_height = -100.0,
-    double max_height =  100.0)
+    double max_height =  100.0,
+    bool   keep_intensity = false)
   {
     rclcpp::NodeOptions opts;
     opts.append_parameter_override("scan_topics",     topics);
+    opts.append_parameter_override("keep_intensity",  keep_intensity);
     opts.append_parameter_override("merged_frame_id", merged_frame);
     opts.append_parameter_override("output_topic",    merged_topic_);
     opts.append_parameter_override("sync_slop",       sync_slop);
@@ -441,6 +443,113 @@ TEST_F(ScanMergerTest, SingleLidar_NanInfRanges_Skipped)
   EXPECT_TRUE(std::isinf(out.ranges[100])) << "NaN input should become inf in output";
   EXPECT_TRUE(std::isinf(out.ranges[150])) << "Inf input should remain inf";
   EXPECT_NEAR(out.ranges[180], 3.0f, 0.02f) << "Valid ray should pass through";
+
+  removeMerger(merger);
+}
+
+// keep_intensity on: the intensity of the winning ray must appear in its output bin,
+// while empty bins stay at 0 and the intensities array matches the ranges length.
+TEST_F(ScanMergerTest, SingleLidar_KeepIntensity_CarriesIntensity)
+{
+  auto merger = makeMerger({"/t9/scan"}, "base_link", 0.5, 0.1, 100.0, -100.0, 100.0, true);
+  broadcastTF(makeTransform("base_link", "lidar_link", 0, 0, 0, 0, 0, 0, 1));
+
+  std::vector<sensor_msgs::msg::LaserScan> received;
+  auto sub = helper_->create_subscription<sensor_msgs::msg::LaserScan>(
+    merged_topic_, 10,
+    [&](sensor_msgs::msg::LaserScan::ConstSharedPtr msg) { received.push_back(*msg); });
+
+  auto pub = helper_->create_publisher<sensor_msgs::msg::LaserScan>("/t9/scan", 10);
+  spinUntil([&]{ return pub->get_subscription_count() > 0; });
+
+  auto scan = makeScan("lidar_link", helper_->now());
+  scan.intensities.assign(scan.ranges.size(), 0.0f);
+  scan.ranges[180]      = 2.5f;   // index 180 = 0 deg
+  scan.intensities[180] = 77.0f;
+  pub->publish(scan);
+
+  ASSERT_TRUE(spinUntil([&]{ return !received.empty(); })) << "No merged scan received";
+
+  const auto& out = received.front();
+  const int expected_bin = angleToBin(0.0);
+  ASSERT_EQ(out.intensities.size(), out.ranges.size()) << "Intensities must parallel ranges";
+  EXPECT_NEAR(out.ranges[expected_bin],      2.5f,  0.02f) << "Range at 0-deg bin";
+  EXPECT_NEAR(out.intensities[expected_bin], 77.0f, 0.02f) << "Intensity of winning ray carried";
+
+  for (int b = 0; b < 360; ++b) {
+    if (b != expected_bin) {
+      EXPECT_FLOAT_EQ(out.intensities[b], 0.0f) << "Empty bin " << b << " should have 0 intensity";
+    }
+  }
+
+  removeMerger(merger);
+}
+
+// keep_intensity off (default): no intensity work happens and the array stays empty.
+TEST_F(ScanMergerTest, SingleLidar_KeepIntensityDisabled_NoIntensities)
+{
+  auto merger = makeMerger({"/t10/scan"});  // keep_intensity defaults to false
+  broadcastTF(makeTransform("base_link", "lidar_link", 0, 0, 0, 0, 0, 0, 1));
+
+  std::vector<sensor_msgs::msg::LaserScan> received;
+  auto sub = helper_->create_subscription<sensor_msgs::msg::LaserScan>(
+    merged_topic_, 10,
+    [&](sensor_msgs::msg::LaserScan::ConstSharedPtr msg) { received.push_back(*msg); });
+
+  auto pub = helper_->create_publisher<sensor_msgs::msg::LaserScan>("/t10/scan", 10);
+  spinUntil([&]{ return pub->get_subscription_count() > 0; });
+
+  auto scan = makeScan("lidar_link", helper_->now());
+  scan.intensities.assign(scan.ranges.size(), 42.0f);  // present on input, but must be ignored
+  scan.ranges[180] = 2.5f;
+  pub->publish(scan);
+
+  ASSERT_TRUE(spinUntil([&]{ return !received.empty(); })) << "No merged scan received";
+
+  const auto& out = received.front();
+  EXPECT_NEAR(out.ranges[angleToBin(0.0)], 2.5f, 0.02f) << "Range still merges normally";
+  EXPECT_TRUE(out.intensities.empty())
+    << "No intensities should be published when keep_intensity is false";
+
+  removeMerger(merger);
+}
+
+// Two LiDARs facing the same way: the closer reading wins the bin, and the output
+// intensity must be that winning ray's — not the farther ray's.
+TEST_F(ScanMergerTest, TwoLidars_KeepIntensity_MinRangeIntensityWins)
+{
+  auto merger = makeMerger({"/t11/scan0", "/t11/scan1"},
+                           "base_link", 0.5, 0.1, 100.0, -100.0, 100.0, true);
+  broadcastTF(makeTransform("base_link", "lidar0_link", 0, 0, 0, 0, 0, 0, 1));
+  broadcastTF(makeTransform("base_link", "lidar1_link", 0, 0, 0, 0, 0, 0, 1));
+
+  std::vector<sensor_msgs::msg::LaserScan> received;
+  auto sub = helper_->create_subscription<sensor_msgs::msg::LaserScan>(
+    merged_topic_, 10,
+    [&](sensor_msgs::msg::LaserScan::ConstSharedPtr msg) { received.push_back(*msg); });
+
+  auto pub0 = helper_->create_publisher<sensor_msgs::msg::LaserScan>("/t11/scan0", 10);
+  auto pub1 = helper_->create_publisher<sensor_msgs::msg::LaserScan>("/t11/scan1", 10);
+  spinUntil([&]{
+    return pub0->get_subscription_count() > 0 && pub1->get_subscription_count() > 0;
+  });
+
+  auto now = helper_->now();
+  auto s0 = makeScan("lidar0_link", now);
+  s0.intensities.assign(s0.ranges.size(), 0.0f);
+  s0.ranges[180] = 5.0f;  s0.intensities[180] = 10.0f;  // farther -> loses
+  auto s1 = makeScan("lidar1_link", now);
+  s1.intensities.assign(s1.ranges.size(), 0.0f);
+  s1.ranges[180] = 2.0f;  s1.intensities[180] = 88.0f;  // closer -> wins
+  pub0->publish(s0);
+  pub1->publish(s1);
+
+  ASSERT_TRUE(spinUntil([&]{ return !received.empty(); })) << "No merged scan received";
+
+  const auto& out = received.front();
+  const int bin = angleToBin(0.0);
+  EXPECT_NEAR(out.ranges[bin],      2.0f,  0.02f) << "Closer reading wins the range";
+  EXPECT_NEAR(out.intensities[bin], 88.0f, 0.02f) << "Winning ray's intensity must be carried";
 
   removeMerger(merger);
 }

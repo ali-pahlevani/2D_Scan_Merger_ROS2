@@ -40,6 +40,12 @@
     use_inf: true
     inf_epsilon: 1.0
 
+    # If true, the merged scan carries per-bin intensities: each bin takes the
+    # intensity of the ray that won it (the minimum-range reading). When false,
+    # no intensity is computed or published (zero overhead). Inputs that don't
+    # provide intensities leave the corresponding bins at 0.
+    keep_intensity: true
+
     # Per-topic buffer depth for the synchronizer.
     queue_size: 20
 

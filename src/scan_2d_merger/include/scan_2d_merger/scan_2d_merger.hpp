@@ -84,6 +84,7 @@ private:
   std::unique_ptr<std::barrier<>> done_barrier_;   // workers -> main: projection done
   std::vector<const LaserScanMsg*> worker_scan_ptrs_;  // set by main before start_barrier
   std::vector<std::vector<float>>  worker_ranges_;     // each worker writes its own array
+  std::vector<std::vector<float>>  worker_intensities_;  // parallel to worker_ranges_; only sized when keep_intensity_
 
   std::vector<std::string> scan_topics_;
   std::vector<int64_t>     scan_policies_;
@@ -100,6 +101,7 @@ private:
   double       range_max_{std::numeric_limits<double>::max()};
   double       inf_eps_{1.0};
   bool         use_inf_{true};
+  bool         keep_intensity_{false};
   double       scan_time_{1.0 / 30.0};
   double       min_height_{std::numeric_limits<double>::lowest()};
   double       max_height_{std::numeric_limits<double>::max()};
@@ -116,9 +118,12 @@ private:
   void mergeAndPublish(const std::vector<LaserScanPtr>& scans);
 
   // Projects rays from one scan into out_ranges, keeping the minimum range per bin.
+  // When out_intensities is non-null, the intensity of the winning (minimum-range)
+  // ray is recorded in the matching bin; pass nullptr to skip all intensity work.
   // Called from worker threads (N > 1) and directly on the main thread (N = 1).
   void projectScan(const LaserScanMsg& scan, const tf2::Transform& tf,
-                   std::vector<float>& out_ranges) const;
+                   std::vector<float>& out_ranges,
+                   std::vector<float>* out_intensities) const;
 
   void workerLoop(std::size_t idx);
 };
