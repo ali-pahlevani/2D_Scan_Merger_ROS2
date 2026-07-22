@@ -229,6 +229,7 @@ In the example config file (`param.yaml`), the chosen parameters are for a speci
 | `max_height` | `double` | `+∞` | Maximum point height [m] in `merged_frame_id`. Points above this are discarded. Useful for filtering ceiling reflections. |
 | `use_inf` | `bool` | `true` | When `true`, bins with no reading are set to `+inf`. When `false`, they are set to `range_max + inf_epsilon`. |
 | `inf_epsilon` | `double` | `1.0` | Offset added to `range_max` for the no-reading fill value when `use_inf` is `false` [m]. |
+| `keep_intensity` | `bool` | `false` | When `true`, the merged scan's `intensities` array is populated: each bin takes the intensity of the ray that won it (the minimum-range reading). Empty bins and inputs without intensities are `0`. When `false`, no intensity computation happens and `intensities` is left empty. |
 | `scan_time` | `double` | `1/30` | Nominal scan period [s], written into the output message header. |
 | `debug` | `bool` | `false` | Logs each subscribed topic and its QoS policy at startup. |
 
@@ -325,7 +326,7 @@ ros2 run rclcpp_components component_container --ros-args \
 
 | Topic | Type | QoS | Description |
 |---|---|---|---|
-| As configured in `output_topic` (default: `merged_scan`) | `sensor_msgs/LaserScan` | Reliable, depth 1 | The merged scan in the `merged_frame_id` frame. |
+| As configured in `output_topic` (default: `merged_scan`) | `sensor_msgs/LaserScan` | Reliable, depth 1 | The merged scan in the `merged_frame_id` frame. `intensities` is populated only when `keep_intensity` is `true`; otherwise it is left empty. |
 
 ### TF
 
