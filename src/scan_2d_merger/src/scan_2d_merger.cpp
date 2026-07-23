@@ -41,7 +41,7 @@ namespace util
 LaserScanMerger::LaserScanMerger(const rclcpp::NodeOptions& opts)
   : rclcpp::Node{"component_scan_2d_merger", opts}
   , tf_buffer_{std::make_unique<tf2_ros::Buffer>(get_clock())}
-  , tf_listener_{std::make_shared<tf2_ros::TransformListener>(*tf_buffer_)}
+  , tf_listener_{std::make_shared<tf2_ros::TransformListener>(*tf_buffer_, this)}
 {
   loadParams();
   if (validateParams()) {
